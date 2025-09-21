@@ -61,7 +61,7 @@ inline static void _initialize_dma() {
     RCC->AHBENR |= RCC_AHBENR_DMAEN;
 
     // set destination peripheral address
-    DMA1_Channel2->CPAR = (uint32_t) (&(USART1->TDR));
+    DMA1_Channel2->CPAR = reinterpret_cast<uint32_t>(&(USART1->TDR));
 
     // Configure the memory address
     DMA1_Channel2->CMAR = reinterpret_cast<uint32_t>(g_uart_tx_buffer);
