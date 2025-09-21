@@ -5,7 +5,6 @@
 #include <uart_logger.hpp>
 
 #define BUFFER_MESSAGES_COUNT 16u
-#define USART_DR (USART1_BASE + 0x01)
 
 static char g_uart_tx_buffer[128];
 static volatile uint16_t length = 0;
