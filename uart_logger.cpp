@@ -4,9 +4,15 @@
 
 #include <uart_logger.hpp>
 
+#ifndef BUFFER_MESSAGES_COUNT
 #define BUFFER_MESSAGES_COUNT 16u
+#endif
 
-static char g_uart_tx_buffer[128];
+#ifndef LOG_MESSAGE_MAX_LEN
+#define LOG_MESSAGE_MAX_LEN 128
+#endif
+
+static char g_uart_tx_buffer[LOG_MESSAGE_MAX_LEN];
 static volatile uint16_t length = 0;
 // 2-byte index produces less code for array addressing;
 static volatile uint16_t idx = 0;
