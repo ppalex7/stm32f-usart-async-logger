@@ -1,8 +1,7 @@
-#include <cstdio>
-
 #include "stm32f030x6.h"
 
 #include <uart_logger.hpp>
+#include <CircularMessageBuffer.hpp>
 
 #ifndef BUFFER_MESSAGES_COUNT
 #define BUFFER_MESSAGES_COUNT 16u
@@ -12,16 +11,10 @@
 #define LOG_MESSAGE_MAX_LEN 128
 #endif
 
-static char g_uart_tx_buffer[LOG_MESSAGE_MAX_LEN];
-static volatile uint16_t length = 0;
-// 2-byte index produces less code for array addressing;
-static volatile uint16_t idx = 0;
-static volatile uint16_t drops = 0;
-static const char *msg_format[BUFFER_MESSAGES_COUNT] = { 0 };
-static volatile short msg_arg[BUFFER_MESSAGES_COUNT];
-
 inline static void _initialize_uart(const uint32_t usart_brr);
 inline static void _initialize_dma();
+
+static CircularMessageBuffer<uint16_t, BUFFER_MESSAGES_COUNT, LOG_MESSAGE_MAX_LEN> g_buffer;
 
 void configure_logger_peripheral(const uint32_t usart_brr) {
     _initialize_uart(usart_brr);
@@ -64,7 +57,7 @@ inline static void _initialize_dma() {
     DMA1_Channel2->CPAR = reinterpret_cast<uint32_t>(&(USART1->TDR));
 
     // Configure the memory address
-    DMA1_Channel2->CMAR = reinterpret_cast<uint32_t>(g_uart_tx_buffer);
+    DMA1_Channel2->CMAR = g_buffer.getBufferAddress();
 
     // priority level: medium
     // memory increment mode
@@ -74,83 +67,27 @@ inline static void _initialize_dma() {
 }
 
 void uart_log(const char *const fmt, uint16_t arg) {
-    bool restore_interrupts = 0;
-    if (*fmt == '\0') {
-        // reject empty string
-        return;
-    }
-    if (idx > BUFFER_MESSAGES_COUNT - 1) {
-        // buffer is full, drop message
-        drops++;
-        return;
-    }
-
-    if (__get_PRIMASK() == 0) {
-        restore_interrupts = 1;
-        __disable_irq();
-    }
-
-    // begin critical section
-    msg_format[idx] = fmt;
-    msg_arg[idx] = arg;
-    idx++;
-    // end critical section
-
-    if (restore_interrupts) {
-        __enable_irq();
-    }
+    g_buffer.enqueue(fmt,  arg);
 }
 
 void on_dma_log_transfer_complete() {
-    uint16_t i;
-    uint8_t max_idx;
-    bool restore_interrupts = 0;
-
     if (DMA1->ISR & DMA_ISR_TCIF2) {
-        if (__get_PRIMASK() == 0) {
-            restore_interrupts = 1;
-            __disable_irq();
-        }
-
-        // begin critical section
-        max_idx = (uint8_t) ((idx > BUFFER_MESSAGES_COUNT - 1) ? BUFFER_MESSAGES_COUNT - 1 : idx);
-        if (idx == 1) {
-            msg_format[0] = 0;
-            msg_arg[0] = 0;
-        } else {
-            for (i = 0; i < max_idx; i++) {
-                msg_format[i] = msg_format[i + 1];
-                msg_arg[i] = msg_arg[i + 1];
-            }
-        }
-        idx--;
-        if (drops && idx < (BUFFER_MESSAGES_COUNT - 1) / 2) {
-            uart_log("...truncated %d messages\n", drops);
-            drops = 0;
-        }
-        length = 0;
-        // end critical section
-
-        if (restore_interrupts) {
-            __enable_irq();
-        }
+        g_buffer.acknowledge();
 
         DMA1->IFCR = DMA_IFCR_CTCIF2;
     }
 }
 
 void process_buffered_logs() {
-    // return if busy or has no messages
-    if (length || !msg_format[0]) {
+    int new_length = g_buffer.dispatch();
+    if (new_length <= 0) {
         return;
     }
-
-    length = (unsigned char) std::snprintf(g_uart_tx_buffer, sizeof(g_uart_tx_buffer), msg_format[0], msg_arg[0]);
 
     // disable channel
     DMA1_Channel2->CCR &= (~DMA_CCR_EN_Msk);
 
-    DMA1_Channel2->CNDTR = length;
+    DMA1_Channel2->CNDTR = static_cast<uint32_t>(new_length);
 
     // trigger UART
     USART1->ICR |= USART_ICR_TCCF;
