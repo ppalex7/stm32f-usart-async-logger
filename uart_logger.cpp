@@ -87,6 +87,7 @@ void process_buffered_logs() {
     // disable channel
     DMA1_Channel2->CCR &= (~DMA_CCR_EN_Msk);
 
+    // set number of data to transfer
     DMA1_Channel2->CNDTR = static_cast<uint32_t>(new_length);
 
     // trigger UART
